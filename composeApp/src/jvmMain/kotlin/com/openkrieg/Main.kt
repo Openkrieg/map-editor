@@ -57,14 +57,9 @@ fun main() = application {
 	FlatDarkLaf.setup()
 
 	Window(
-		onCloseRequest = ::exitApplication,
-		title = "${Constants.NAME} Map Editor v${Constants.VERSION}",
-		state = rememberWindowState(
-			width = Constants.DEFAULT_WINDOW_WIDTH.dp,
-			height = Constants.DEFAULT_WINDOW_HEIGHT.dp,
-			position = WindowPosition.Aligned(Alignment.Center)
-		),
-		icon = painterResource(Res.drawable.app_icon)
+		onCloseRequest = ::exitApplication, title = "${Constants.NAME} Map Editor v${Constants.VERSION}", state = rememberWindowState(
+			width = Constants.DEFAULT_WINDOW_WIDTH.dp, height = Constants.DEFAULT_WINDOW_HEIGHT.dp, position = WindowPosition.Aligned(Alignment.Center)
+		), icon = painterResource(Res.drawable.app_icon)
 	) {
 		val editorViewModel by remember { mutableStateOf(EditorViewModel(window)) }
 		Box(
@@ -105,7 +100,7 @@ fun main() = application {
 						"Base Image",
 						icon = painterResource(Res.drawable.import_image),
 						onClick = {
-							if (editorViewModel.mapViewModel.openBaseImageOnly()) {
+							editorViewModel.mapViewModel.openBaseImageOnly {
 								editorViewModel.editorType = EditorType.RKM_MAP
 							}
 						},
@@ -116,7 +111,7 @@ fun main() = application {
 						"Image Layers",
 						icon = painterResource(Res.drawable.import_image_layers),
 						onClick = {
-							if (editorViewModel.mapViewModel.openImageLayers()) {
+							editorViewModel.mapViewModel.openImageLayers {
 								editorViewModel.editorType = EditorType.RKM_MAP
 							}
 						},

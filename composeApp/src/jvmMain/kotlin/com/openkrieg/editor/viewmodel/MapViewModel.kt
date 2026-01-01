@@ -19,6 +19,7 @@ import com.riskrieg.map.territory.Nucleus
 import com.riskrieg.map.territory.TerritoryIdentity
 import com.riskrieg.palette.RkpPalette
 import io.github.aaronjyoder.fill.recursive.BlockFiller
+import kotlinx.coroutines.*
 import org.jgrapht.Graphs
 import org.jgrapht.graph.SimpleGraph
 import tools.jackson.module.kotlin.KotlinModule
@@ -42,6 +43,8 @@ import kotlin.collections.ArrayDeque
 
 
 class MapViewModel(private val window: ComposeWindow, var mousePosition: Point) {
+
+	private val viewModelScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
 	/* Exported Data */
 
@@ -164,20 +167,31 @@ class MapViewModel(private val window: ComposeWindow, var mousePosition: Point) 
 		val mapCodename = normalizedName.lowercase().replace("\\s+".toRegex(), "-").replace("[^a-z0-9-]".toRegex(), "")
 
 		chooser.selectedFile = File("$mapCodename.rkm")
+
 		if (chooser.showSaveDialog(window) == JFileChooser.APPROVE_OPTION) {
-			if (chooser.selectedFile.name.isNullOrBlank() || !chooser.selectedFile.nameWithoutExtension.matches(mapSimpleNameRegex)) {
+			val selectedFile = chooser.selectedFile
+			val directory = chooser.currentDirectory.path.replace('\\', '/') + "/"
+
+			if (selectedFile.name.isNullOrBlank() || !selectedFile.nameWithoutExtension.matches(mapSimpleNameRegex)) {
 				throw IllegalStateException("Invalid file name. Use only lowercase letters, numbers, and hyphens/dashes.")
 			} else {
-				val directory = chooser.currentDirectory.path.replace('\\', '/') + "/"
-				try {
-					val rkmMap = RkmMap(mapCodename, mapDisplayName, mapAuthorName, graph.vertexSet(), graph.edgeSet(), baseLayer, textLayer)
-					val encoder = RkmEncoder()
-					val fos = FileOutputStream(File(directory + "${mapCodename}.rkm"))
-					encoder.encode(rkmMap, fos)
-					fos.close()
-					JOptionPane.showMessageDialog(window, "Map file successfully exported to the selected directory.", "Success", JOptionPane.PLAIN_MESSAGE)
-				} catch (e: Exception) {
-					throw IllegalStateException("Unable to save map file due to an unexpected error.")
+				viewModelScope.launch {
+					try {
+						withContext(Dispatchers.IO) {
+							val rkmMap = RkmMap(mapCodename, mapDisplayName, mapAuthorName, graph.vertexSet(), graph.edgeSet(), baseLayer, textLayer)
+							val encoder = RkmEncoder()
+
+							val finalFile = if (selectedFile.name.endsWith(".rkm")) selectedFile else File(directory + "${mapCodename}.rkm")
+
+							FileOutputStream(finalFile).use { fos ->
+								encoder.encode(rkmMap, fos)
+							}
+						}
+						JOptionPane.showMessageDialog(window, "Map file successfully exported.", "Success", JOptionPane.PLAIN_MESSAGE)
+					} catch (e: Exception) {
+						e.printStackTrace()
+						throw IllegalStateException("Unable to save map file: ${e.message}")
+					}
 				}
 			}
 		}
@@ -185,57 +199,74 @@ class MapViewModel(private val window: ComposeWindow, var mousePosition: Point) 
 
 	/* Menu Bar Functions */
 
-	fun openBaseImageOnly(): Boolean {
+	fun openBaseImageOnly(onSuccess: () -> Unit = {}) {
 		val chooser = JFileChooser()
 		chooser.isAcceptAllFileFilterUsed = false
 		chooser.fileFilter = FileNameExtensionFilter("Images (*.png)", "png")
 		chooser.currentDirectory = File(System.getProperty("user.home"))
-		if (chooser.showDialog(window, "Import Base Layer") == JFileChooser.APPROVE_OPTION) {
-			try {
-				val newBaseLayer = ImageIO.read(chooser.selectedFile)
-				reset()
-				baseLayer = newBaseLayer
-				textLayer = BufferedImage(baseLayer.width, baseLayer.height, BufferedImage.TYPE_INT_ARGB)
 
-				update()
-				return true
-			} catch (e: IOException) {
-				JOptionPane.showMessageDialog(window, "Error loading image.", "Error", JOptionPane.ERROR_MESSAGE)
+		if (chooser.showDialog(window, "Import Base Layer") == JFileChooser.APPROVE_OPTION) {
+			val fileToLoad = chooser.selectedFile
+
+			viewModelScope.launch {
+				try {
+					val newBaseLayer = withContext(Dispatchers.IO) {
+						ImageIO.read(fileToLoad)
+					}
+
+					reset()
+					baseLayer = newBaseLayer
+					textLayer = BufferedImage(baseLayer.width, baseLayer.height, BufferedImage.TYPE_INT_ARGB)
+					update()
+
+					onSuccess()
+				} catch (e: IOException) {
+					JOptionPane.showMessageDialog(window, "Error loading image: ${e.message}", "Error", JOptionPane.ERROR_MESSAGE)
+				}
 			}
 		}
-		return false
 	}
 
-	fun openImageLayers(): Boolean {
+	fun openImageLayers(onSuccess: () -> Unit = {}) {
 		val chooser = JFileChooser()
 		chooser.isAcceptAllFileFilterUsed = false
 		chooser.fileFilter = FileNameExtensionFilter("Images (*.png)", "png")
 		chooser.currentDirectory = File(System.getProperty("user.home"))
-		if (chooser.showDialog(window, "Import Base Layer") == JFileChooser.APPROVE_OPTION) {
-			try {
-				val newBaseLayer = ImageIO.read(chooser.selectedFile)
-				reset()
-				baseLayer = newBaseLayer
 
-				val successText = chooser.showDialog(window, "Import Text Layer")
-				if (successText == JFileChooser.APPROVE_OPTION) {
-					val newTextLayer = ImageIO.read(chooser.selectedFile)
-					if (newTextLayer.height == newBaseLayer.height && newTextLayer.width == newBaseLayer.width) {
-						textLayer = newTextLayer
-						update()
-						return true
-					} else {
-						JOptionPane.showMessageDialog(
-							window, "Your text layer must match the width and height of your base layer. Import your base layer first.", "Error", JOptionPane.ERROR_MESSAGE
-						)
+		if (chooser.showDialog(window, "Import Base Layer") == JFileChooser.APPROVE_OPTION) {
+			val baseFile = chooser.selectedFile
+
+			val successText = chooser.showDialog(window, "Import Text Layer")
+			if (successText == JFileChooser.APPROVE_OPTION) {
+				val textFile = chooser.selectedFile
+
+				viewModelScope.launch {
+					try {
+						val (newBaseLayer, newTextLayer) = withContext(Dispatchers.IO) {
+							val base = ImageIO.read(baseFile)
+							val text = ImageIO.read(textFile)
+							Pair(base, text)
+						}
+
+						if (newTextLayer.height == newBaseLayer.height && newTextLayer.width == newBaseLayer.width) {
+							reset()
+							baseLayer = newBaseLayer
+							textLayer = newTextLayer
+							update()
+
+							onSuccess()
+						} else {
+							JOptionPane.showMessageDialog(
+								window, "Your text layer must match the width and height of your base layer.", "Error", JOptionPane.ERROR_MESSAGE
+							)
+						}
+					} catch (e: IOException) {
+						JOptionPane.showMessageDialog(window, "Error loading images: ${e.message}", "Error", JOptionPane.ERROR_MESSAGE)
 					}
 				}
 
-			} catch (e: IOException) {
-				JOptionPane.showMessageDialog(window, "Error loading image.", "Error", JOptionPane.ERROR_MESSAGE)
 			}
 		}
-		return false
 	}
 
 	fun importBaseImage() {
@@ -243,22 +274,27 @@ class MapViewModel(private val window: ComposeWindow, var mousePosition: Point) 
 		chooser.isAcceptAllFileFilterUsed = false
 		chooser.fileFilter = FileNameExtensionFilter("Image (*.png)", "png")
 		chooser.currentDirectory = File(System.getProperty("user.home"))
+
 		if (chooser.showDialog(window, "Import Base Layer Image") == JFileChooser.APPROVE_OPTION) {
+			val file = chooser.selectedFile
 			// TODO: Pop-up to select territories which have changed
 			// For now, just put a confirmation warning.
 			val selection: Int = JOptionPane.showConfirmDialog(
-				window,
-				"Warning! Changing the base layer may lead to unexpected issues if you do not remove the territories that were changed first. Continue?"
+				window, "Warning! Changing the base layer may lead to unexpected issues if you do not remove the territories that were changed first. Continue?"
 			)
 			when (selection) {
 				JOptionPane.YES_OPTION -> {
-					try {
-						val newBaseLayer = ImageIO.read(chooser.selectedFile)
-						deselectAll()
-						baseLayer = newBaseLayer
-						update()
-					} catch (e: IOException) {
-						JOptionPane.showMessageDialog(window, "Error loading image.", "Error", JOptionPane.ERROR_MESSAGE)
+					viewModelScope.launch {
+						try {
+							val newBaseLayer = withContext(Dispatchers.IO) {
+								ImageIO.read(file)
+							}
+							deselectAll()
+							baseLayer = newBaseLayer
+							update()
+						} catch (e: IOException) {
+							JOptionPane.showMessageDialog(window, "Error loading image.", "Error", JOptionPane.ERROR_MESSAGE)
+						}
 					}
 				}
 
@@ -274,82 +310,59 @@ class MapViewModel(private val window: ComposeWindow, var mousePosition: Point) 
 		chooser.isAcceptAllFileFilterUsed = false
 		chooser.fileFilter = FileNameExtensionFilter("Image (*.png)", "png")
 		chooser.currentDirectory = File(System.getProperty("user.home"))
+
 		if (chooser.showDialog(window, "Import Text Layer Image") == JFileChooser.APPROVE_OPTION) {
-			try {
-				val newTextLayer = ImageIO.read(chooser.selectedFile)
-				if (newTextLayer.height == mapImage().height && newTextLayer.width == mapImage().width) {
-					deselectAll()
-					textLayer = newTextLayer
-					update()
-				} else {
-					JOptionPane.showMessageDialog(
-						window, "Your text layer must match the width and height of your base layer. Import your base layer first.", "Error", JOptionPane.ERROR_MESSAGE
-					)
+			val file = chooser.selectedFile
+			viewModelScope.launch {
+				try {
+					val newTextLayer = withContext(Dispatchers.IO) {
+						ImageIO.read(file)
+					}
+					if (newTextLayer.height == mapImage().height && newTextLayer.width == mapImage().width) {
+						deselectAll()
+						textLayer = newTextLayer
+						update()
+					} else {
+						JOptionPane.showMessageDialog(
+							window, "Your text layer must match the width and height of your base layer. Import your base layer first.", "Error", JOptionPane.ERROR_MESSAGE
+						)
+					}
+				} catch (e: IOException) {
+					JOptionPane.showMessageDialog(window, "Error loading image.", "Error", JOptionPane.ERROR_MESSAGE)
 				}
-			} catch (e: IOException) {
-				JOptionPane.showMessageDialog(window, "Error loading image.", "Error", JOptionPane.ERROR_MESSAGE)
 			}
 		}
 	}
 
 	fun exportBaseImage() {
-		val chooser = JFileChooser()
-		chooser.dialogTitle = "Save ${Constants.NAME} Base Image"
-		chooser.isAcceptAllFileFilterUsed = false
-		chooser.fileFilter = FileNameExtensionFilter("Image (*.png)", "png")
-		chooser.currentDirectory = File(System.getProperty("user.home"))
-		if (chooser.showSaveDialog(window) == JFileChooser.APPROVE_OPTION) {
-			if (chooser.selectedFile.name.isNullOrBlank()) {
-				JOptionPane.showMessageDialog(window, "Invalid file name.", "Error", JOptionPane.ERROR_MESSAGE)
-			} else {
-				val fileName = chooser.selectedFile.nameWithoutExtension
-				try {
-					ImageIO.write(baseLayer, "png", chooser.currentDirectory.toPath().resolve("$fileName.png").toFile())
-					JOptionPane.showMessageDialog(window, "Base image successfully exported to the selected directory.", "Success", JOptionPane.PLAIN_MESSAGE)
-				} catch (e: Exception) {
-					JOptionPane.showMessageDialog(window, "Unable to save base image due to an error.", "Error", JOptionPane.ERROR_MESSAGE)
-				}
-			}
-		}
+		exportImageGeneric(baseLayer, "Base Image")
 	}
 
 	fun exportTextImage() {
-		val chooser = JFileChooser()
-		chooser.dialogTitle = "Save ${Constants.NAME} Text Image"
-		chooser.isAcceptAllFileFilterUsed = false
-		chooser.fileFilter = FileNameExtensionFilter("Image (*.png)", "png")
-		chooser.currentDirectory = File(System.getProperty("user.home"))
-		if (chooser.showSaveDialog(window) == JFileChooser.APPROVE_OPTION) {
-			if (chooser.selectedFile.name.isNullOrBlank()) {
-				JOptionPane.showMessageDialog(window, "Invalid file name.", "Error", JOptionPane.ERROR_MESSAGE)
-			} else {
-				val fileName = chooser.selectedFile.nameWithoutExtension
-				try {
-					ImageIO.write(textLayer, "png", chooser.currentDirectory.toPath().resolve("$fileName.png").toFile())
-					JOptionPane.showMessageDialog(window, "Text image successfully exported to the selected directory.", "Success", JOptionPane.PLAIN_MESSAGE)
-				} catch (e: Exception) {
-					JOptionPane.showMessageDialog(window, "Unable to save text image due to an error.", "Error", JOptionPane.ERROR_MESSAGE)
-				}
-			}
-		}
+		exportImageGeneric(textLayer, "Text Image")
 	}
+
+
 
 	fun importGraph() {
 		val chooser = JFileChooser()
 		chooser.isAcceptAllFileFilterUsed = false
 		chooser.fileFilter = FileNameExtensionFilter("${Constants.NAME} Graph (*.json)", "json")
 		chooser.currentDirectory = File(System.getProperty("user.home"))
+
 		if (chooser.showDialog(window, "Import Graph File") == JFileChooser.APPROVE_OPTION) {
+			val file = chooser.selectedFile
+
 			try {
 				// Workaround for RkJsonUtil not supporting Kotlin super well atm
 				val jsonMapper = jacksonMapperBuilder().addModule(KotlinModule.Builder().build()).build()
-				val path = chooser.selectedFile.toPath()
+				val path = file.toPath()
 				var mapGraph: MapGraph? = null
 				if (Files.isRegularFile(path) && Files.isReadable(path)) {
 					mapGraph = jsonMapper.readValue(Files.newBufferedReader(path), jsonMapper.constructType(MapGraph::class.java))
 				}
 				// End workaround
-				// val mapGraph: MapGraph? = RkJsonUtil.read(chooser.selectedFile.toPath(), MapGraph::class.java) <- This would be preferable
+				// val mapGraph: MapGraph? = RkJsonUtil.read(file.toPath(), MapGraph::class.java) <- This would be preferable
 				if (mapGraph != null) {
 					deselectAll()
 					graph = SimpleGraph<Territory, Border>(Border::class.java)
@@ -400,9 +413,7 @@ class MapViewModel(private val window: ComposeWindow, var mousePosition: Point) 
 			} else {
 				try {
 					JsonHelper.write(
-						chooser.currentDirectory.toPath().resolve("${chooser.selectedFile.nameWithoutExtension}.json"),
-						MapGraph::class.java,
-						MapGraph(graph)
+						chooser.currentDirectory.toPath().resolve("${chooser.selectedFile.nameWithoutExtension}.json"), MapGraph::class.java, MapGraph(graph)
 					)
 					JOptionPane.showMessageDialog(window, "Graph file successfully exported to the selected directory.", "Success", JOptionPane.PLAIN_MESSAGE)
 				} catch (e: Exception) {
@@ -849,6 +860,35 @@ class MapViewModel(private val window: ComposeWindow, var mousePosition: Point) 
 			}
 		}
 		return graph
+	}
+
+	private fun exportImageGeneric(image: BufferedImage, typeName: String) {
+		val chooser = JFileChooser()
+		chooser.dialogTitle = "Save ${Constants.NAME} $typeName"
+		chooser.isAcceptAllFileFilterUsed = false
+		chooser.fileFilter = FileNameExtensionFilter("Image (*.png)", "png")
+		chooser.currentDirectory = File(System.getProperty("user.home"))
+
+		if (chooser.showSaveDialog(window) == JFileChooser.APPROVE_OPTION) {
+			val file = chooser.selectedFile
+			val dir = chooser.currentDirectory
+
+			if (file.name.isNullOrBlank()) {
+				JOptionPane.showMessageDialog(window, "Invalid file name.", "Error", JOptionPane.ERROR_MESSAGE)
+			} else {
+				viewModelScope.launch {
+					try {
+						val fileName = file.nameWithoutExtension
+						withContext(Dispatchers.IO) {
+							ImageIO.write(image, "png", dir.toPath().resolve("$fileName.png").toFile())
+						}
+						JOptionPane.showMessageDialog(window, "$typeName successfully exported.", "Success", JOptionPane.PLAIN_MESSAGE)
+					} catch (e: Exception) {
+						JOptionPane.showMessageDialog(window, "Unable to save $typeName.", "Error", JOptionPane.ERROR_MESSAGE)
+					}
+				}
+			}
+		}
 	}
 
 }
