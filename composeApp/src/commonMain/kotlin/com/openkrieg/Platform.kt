@@ -1,0 +1,7 @@
+package com.openkrieg
+
+interface Platform {
+    val name: String
+}
+
+expect fun getPlatform(): Platform
