@@ -67,13 +67,6 @@ private fun MapViewport(model: MapViewModel, modifier: Modifier) {
 
 	val highQualityPaint = remember { Paint().apply { filterQuality = FilterQuality.High } }
 
-	val currentMapX = (pointerPos.x / scale).toInt()
-	val currentMapY = (pointerPos.y / scale).toInt()
-
-	SideEffect {
-		model.mousePosition = Point(currentMapX, currentMapY)
-	}
-
 	val focusRequester = remember(::FocusRequester)
 	LaunchedEffect(Unit) {
 		focusRequester.requestFocus()
@@ -94,6 +87,11 @@ private fun MapViewport(model: MapViewModel, modifier: Modifier) {
 
 							if (event.type == PointerEventType.Move) {
 								pointerPos = position
+								
+								val mapX = (position.x / scale).toInt()
+								val mapY = (position.y / scale).toInt()
+
+								model.onMouseMove(Point(mapX, mapY))
 							}
 
 							if (event.buttons.isSecondaryPressed && event.type == PointerEventType.Move) {

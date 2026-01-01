@@ -86,6 +86,14 @@ class MapViewModel(private val window: ComposeWindow, var mousePosition: Point) 
 		return textLayer
 	}
 
+	/** Events **/
+
+	fun onMouseMove(newPosition: Point) {
+		if (this.mousePosition != newPosition) {
+			this.mousePosition = newPosition
+		}
+	}
+
 	/** Methods **/
 
 	fun init(map: RkmMap) {
