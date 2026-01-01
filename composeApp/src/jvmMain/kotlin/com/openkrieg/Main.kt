@@ -29,7 +29,7 @@ import java.awt.GraphicsEnvironment
 import java.awt.datatransfer.DataFlavor
 import java.io.ByteArrayInputStream
 import java.io.File
-import java.net.URL
+import java.net.URI
 import javax.swing.JOptionPane
 import kotlin.system.exitProcess
 
@@ -247,7 +247,7 @@ fun main() = application {
 
 private fun openLink(linkStr: String) {
 	try {
-		Desktop.getDesktop().browse(URL(linkStr).toURI())
+		Desktop.getDesktop().browse(URI(linkStr))
 	} catch (e: Exception) {
 		// TODO: Open dialog popup?
 	}
