@@ -70,23 +70,31 @@ compose.desktop {
 
 		nativeDistributions {
 			targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Deb, TargetFormat.Dmg)
-			packageName = "com.openkrieg"
+			packageName = "Openkrieg Map Editor"
 			packageVersion = "2.8.6"
 			description = "The official Openkrieg map editor."
 			vendor = "Openkrieg"
 
+			val iconsRoot = project.file("launcher-icon")
+
 			linux {
+				iconFile.set(iconsRoot.resolve("linux.png"))
+
 				packageName = "openkrieg-map-editor"
 				debMaintainer = "Openkrieg <contact@adelheid.org>"
 				menuGroup = "Openkrieg"
 			}
 
 			windows {
+				iconFile.set(iconsRoot.resolve("windows.ico"))
+
 				menuGroup = "Openkrieg"
 				upgradeUuid = getProjectProperty("guid")
 			}
 
 			macOS {
+				iconFile.set(iconsRoot.resolve("macos.icns"))
+
 				bundleID = "com.openkrieg.mapeditor"
 			}
 		}
