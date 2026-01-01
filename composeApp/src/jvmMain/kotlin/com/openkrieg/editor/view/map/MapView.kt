@@ -21,11 +21,11 @@ import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.openkrieg.editor.constant.ViewColor
 import com.openkrieg.editor.viewmodel.MapViewModel
-import kotlinx.coroutines.launch
 import java.awt.Point
 import kotlin.math.pow
 
@@ -96,10 +96,18 @@ private fun MapViewport(model: MapViewModel, modifier: Modifier) {
 								pointerPos = position
 							}
 
+							if (event.buttons.isSecondaryPressed && event.type == PointerEventType.Move) {
+								val delta = changes.position - changes.previousPosition
+
+								stateHorizontal.dispatchRawDelta(-delta.x)
+								stateVertical.dispatchRawDelta(-delta.y)
+								changes.consume()
+							}
+
 							if (event.type == PointerEventType.Scroll && canZoom) {
 								val scrollDelta = changes.scrollDelta.y
 
-								val zoomFactor = 1.05f.pow(-scrollDelta)
+								val zoomFactor = 1.15f.pow(-scrollDelta)
 								val oldScale = scale
 								val newScale = (oldScale * zoomFactor).coerceIn(minScale, maxScale)
 
@@ -110,10 +118,8 @@ private fun MapViewport(model: MapViewModel, modifier: Modifier) {
 
 									scale = newScale
 
-									scope.launch {
-										stateHorizontal.dispatchRawDelta(xShift)
-										stateVertical.dispatchRawDelta(yShift)
-									}
+									stateHorizontal.dispatchRawDelta(xShift)
+									stateVertical.dispatchRawDelta(yShift)
 								}
 								changes.consume()
 							}
