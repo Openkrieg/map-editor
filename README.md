@@ -7,7 +7,7 @@
 
 A map editor for Openkrieg, written in Kotlin with Compose Multiplatform. This allows you to import map images and define your territories and their neighbors, as well as other map metadata.
 
-The editor also includes a Openkrieg palette editor, which allows you to create and edit `.rkp` files.
+The editor also includes an Openkrieg palette editor, which allows you to create and edit `.rkp` files.
 
 Anything you create with this editor is free for you to keep and use for any purpose. You own the things made with this editor. Additionally, you can use the `.rkm` and `.rkp` formats for any purpose.
 
