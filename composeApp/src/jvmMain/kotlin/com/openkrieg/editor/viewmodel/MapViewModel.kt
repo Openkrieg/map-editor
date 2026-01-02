@@ -108,7 +108,7 @@ class MapViewModel(private val window: ComposeWindow, var mousePosition: Point) 
 
 		// Load image data
 		baseLayer = map.baseLayer()
-		textLayer = map.textLayer()
+		textLayer = ImageUtil.convert(map.textLayer(), BufferedImage.TYPE_INT_ARGB)
 
 		// Load graph data
 		graph = map.toGraph()
@@ -123,6 +123,10 @@ class MapViewModel(private val window: ComposeWindow, var mousePosition: Point) 
 		// Update view
 		update()
 
+	}
+
+	private fun refreshTextLayer() {
+		textLayer = ImageUtil.createCopy(textLayer, BufferedImage.TYPE_INT_ARGB)
 	}
 
 	fun reset() {
@@ -316,9 +320,12 @@ class MapViewModel(private val window: ComposeWindow, var mousePosition: Point) 
 			val file = chooser.selectedFile
 			viewModelScope.launch {
 				try {
-					val newTextLayer = withContext(Dispatchers.IO) {
+					val rawImage = withContext(Dispatchers.IO) {
 						ImageIO.read(file)
 					}
+
+					val newTextLayer = ImageUtil.convert(rawImage, BufferedImage.TYPE_INT_ARGB)
+
 					if (newTextLayer.height == mapImage().height && newTextLayer.width == mapImage().width) {
 						deselectAll()
 						textLayer = newTextLayer
@@ -342,7 +349,6 @@ class MapViewModel(private val window: ComposeWindow, var mousePosition: Point) 
 	fun exportTextImage() {
 		exportImageGeneric(textLayer, "Text Image")
 	}
-
 
 
 	fun importGraph() {
@@ -649,70 +655,66 @@ class MapViewModel(private val window: ComposeWindow, var mousePosition: Point) 
 
 	fun addTerritoryLabel() {
 		if (selectedTerritories.isEmpty()) {
-			JOptionPane.showMessageDialog(window, "You have not selected a territory to add a label to.", "Warning", JOptionPane.WARNING_MESSAGE)
+			JOptionPane.showMessageDialog(window, "You have not selected a territory.", "Warning", JOptionPane.WARNING_MESSAGE)
 			return
 		}
 		if (selectedTerritories.size > 1) {
-			JOptionPane.showMessageDialog(window, "You can only add a label to one territory at a time.", "Warning", JOptionPane.WARNING_MESSAGE)
+			JOptionPane.showMessageDialog(window, "Select only one territory.", "Warning", JOptionPane.WARNING_MESSAGE)
 			return
 		}
 		if (this.selectedTerritoryHasLabel) {
 			JOptionPane.showMessageDialog(window, "This territory is already labelled.", "Warning", JOptionPane.WARNING_MESSAGE)
 			return
 		}
-		for (territory in selectedTerritories) {
-			val lp = LabelPosition(baseLayer, territory.nuclei.map { nucleus -> nucleus.toPoint() }.toMutableSet(), 0.001)
 
-			val territoryFont = Font("Spectral Medium", Font.PLAIN, 20)
-			if (lp.canLabelFit(territory.identity.toString().trim(), territoryFont)) { // Only draw label if it can fit
-				val labelPosition = lp.calculatePosition()
+		val territory = selectedTerritories.first()
+		val name = territory.identity.toString().trim()
 
-				val convertedText = ImageUtil.createCopy(ImageUtil.convert(textLayer, BufferedImage.TYPE_INT_ARGB))
+		viewModelScope.launch {
+			try {
+				val success = withContext(Dispatchers.Default) {
+					paintLabel(territory, name)
+				}
 
-				val textGraphics = convertedText.createGraphics()
+				refreshTextLayer()
 
-				textGraphics.paint = RkpPalette.DEFAULT_TEXT_COLOR.toAwtColor()
-
-				// TODO: Set size based on whether it can fit inside territory bounds, to a minimum, with 20 as the maximum and default
-				ImageUtil.drawCenteredString(textGraphics, territory.identity.toString().trim(), Rectangle(labelPosition.x, labelPosition.y, 1, 1), territoryFont)
-
-				textGraphics.dispose()
-				textLayer = convertedText
-				update()
-				this.selectedTerritoryHasLabel = true
-			} else {
-				JOptionPane.showMessageDialog(
-					window,
-					"A label will not fit in that territory. You will need to export the current text image using the debug menu, manually apply your label in an image editor, and then re-import the text image using the debug menu. You should save your work first.",
-					"Warning",
-					JOptionPane.WARNING_MESSAGE
-				)
-				return
+				if (success) {
+					selectedTerritoryHasLabel = true
+					update()
+				} else {
+					JOptionPane.showMessageDialog(
+						window,
+						"A label will not fit in that territory. You may need to edit the text layer manually.",
+						"Warning",
+						JOptionPane.WARNING_MESSAGE
+					)
+				}
+			} catch (e: Exception) {
+				e.printStackTrace()
 			}
 		}
 	}
 
 	fun clearTerritoryLabel() {
 		if (selectedTerritories.isEmpty()) {
-			JOptionPane.showMessageDialog(window, "You have not selected a territory to delete.", "Warning", JOptionPane.WARNING_MESSAGE)
+			JOptionPane.showMessageDialog(window, "You have not selected a territory.", "Warning", JOptionPane.WARNING_MESSAGE)
 			return
 		}
-		for (territory in selectedTerritories) {
-			// Clear territory label
-			val nuclei = HashSet<Point>()
-			for (sp in territory.nuclei()) {
-				nuclei.add(Point(sp.x(), sp.y()))
-			}
-			val innerPointsMap = TerritoryUtil.createInnerPointMap(nuclei, baseLayer)
 
-			for ((_, innerPoints) in innerPointsMap) {
-				for (point in innerPoints) {
-					textLayer.setRGB(point.x, point.y, Color(0, 0, 0, 0).rgb)
+		viewModelScope.launch {
+			try {
+				withContext(Dispatchers.Default) {
+					for (territory in selectedTerritories) {
+						eraseLabel(territory)
+					}
+					refreshTextLayer()
 				}
+				selectedTerritoryHasLabel = false
+				update()
+			} catch (e: Exception) {
+				e.printStackTrace()
 			}
 		}
-		update()
-		this.selectedTerritoryHasLabel = false
 	}
 
 	fun deleteSelectedTerritory() {
@@ -958,9 +960,7 @@ class MapViewModel(private val window: ComposeWindow, var mousePosition: Point) 
 		val r2 = (c2 shr 16) and 0xFF
 		val g2 = (c2 shr 8) and 0xFF
 		val b2 = c2 and 0xFF
-		return kotlin.math.abs(r1 - r2) < tolerance &&
-				kotlin.math.abs(g1 - g2) < tolerance &&
-				kotlin.math.abs(b1 - b2) < tolerance
+		return kotlin.math.abs(r1 - r2) < tolerance && kotlin.math.abs(g1 - g2) < tolerance && kotlin.math.abs(b1 - b2) < tolerance
 	}
 
 	/* Private */
@@ -1059,6 +1059,37 @@ class MapViewModel(private val window: ComposeWindow, var mousePosition: Point) 
 						JOptionPane.showMessageDialog(window, "Unable to save $typeName.", "Error", JOptionPane.ERROR_MESSAGE)
 					}
 				}
+			}
+		}
+	}
+
+	private fun paintLabel(territory: Territory, name: String): Boolean {
+		val lp = LabelPosition(baseLayer, territory.nuclei.map { nucleus -> nucleus.toPoint() }.toMutableSet(), 0.001)
+		val territoryFont = Font("Spectral Medium", Font.PLAIN, 20)
+
+		if (lp.canLabelFit(name, territoryFont)) {
+			val labelPosition = lp.calculatePosition()
+			val g2d = textLayer.createGraphics()
+			g2d.paint = RkpPalette.DEFAULT_TEXT_COLOR.toAwtColor()
+
+			ImageUtil.drawCenteredString(g2d, name, Rectangle(labelPosition.x, labelPosition.y, 1, 1), territoryFont)
+			g2d.dispose()
+			return true
+		}
+		return false
+	}
+
+	private fun eraseLabel(territory: Territory) {
+		val nuclei = HashSet<Point>()
+		for (sp in territory.nuclei()) {
+			nuclei.add(Point(sp.x(), sp.y()))
+		}
+		val innerPointsMap = TerritoryUtil.createInnerPointMap(nuclei, baseLayer)
+
+		for ((_, innerPoints) in innerPointsMap) {
+			for (point in innerPoints) {
+				// Set pixel to transparent
+				textLayer.setRGB(point.x, point.y, Color(0, 0, 0, 0).rgb)
 			}
 		}
 	}
