@@ -125,8 +125,8 @@ class MapViewModel(private val window: ComposeWindow, var mousePosition: Point) 
 
 	}
 
-	private fun refreshTextLayer() {
-		textLayer = ImageUtil.createCopy(textLayer, BufferedImage.TYPE_INT_ARGB)
+	fun selectedTerritoriesAreSubmitted(): Boolean {
+		return selectedTerritories.all { submittedTerritories.contains(it) }
 	}
 
 	fun reset() {
@@ -653,6 +653,90 @@ class MapViewModel(private val window: ComposeWindow, var mousePosition: Point) 
 		return false
 	}
 
+	fun renameSelectedTerritory(alsoSubmit: Boolean = false, redrawLabel: Boolean = false) {
+		if (selectedTerritories.size != 1) {
+			JOptionPane.showMessageDialog(window, "Please select exactly one territory to rename.", "Warning", JOptionPane.WARNING_MESSAGE)
+			return
+		}
+
+		val oldTerritory = selectedTerritories.first()
+		val newNameString = newTerritoryName.trim()
+
+		if (newNameString.isBlank()) {
+			JOptionPane.showMessageDialog(window, "Name cannot be empty.", "Warning", JOptionPane.WARNING_MESSAGE)
+			return
+		}
+		if (oldTerritory.name() == newNameString) {
+			// Name didn't change, but maybe we still want to submit?
+			if (alsoSubmit) submitSelectedNeighbors()
+			return
+		}
+		if (graph.vertexSet().any { it.name().equals(newNameString, ignoreCase = true) }) {
+			JOptionPane.showMessageDialog(window, "A territory with that name already exists.", "Error", JOptionPane.ERROR_MESSAGE)
+			return
+		}
+
+		viewModelScope.launch {
+			try {
+				// We return the new objects we need for the main thread update
+				val result = withContext(Dispatchers.Default) {
+					val newTerritory = Territory(TerritoryIdentity(newNameString), oldTerritory.nuclei)
+
+					if (selectedTerritoryHasLabel && redrawLabel) {
+						eraseLabel(oldTerritory)
+						paintLabel(newTerritory, newNameString)
+						val newImage = ImageUtil.createCopy(textLayer, BufferedImage.TYPE_INT_ARGB)
+						Pair(newTerritory, newImage)
+					} else {
+						Pair(newTerritory, null)
+					}
+				}
+
+				val newTerritory = result.first
+				val newTextLayer = result.second
+
+				// Update graph
+				graph.addVertex(newTerritory)
+				val neighbors = Graphs.neighborListOf(graph, oldTerritory)
+				for (neighbor in neighbors) {
+					val border = Border(newTerritory.identity, neighbor.identity)
+					graph.addEdge(newTerritory, neighbor, border)
+				}
+				graph.removeVertex(oldTerritory)
+
+				fun swapInList(list: MutableList<Territory>) {
+					val index = list.indexOf(oldTerritory)
+					if (index != -1) {
+						list.removeAt(index)
+						list.add(index, newTerritory)
+					}
+				}
+
+				swapInList(submittedTerritories)
+				swapInList(finishedTerritories)
+
+				// IMPORTANT: Update selection last so the UI redraws with valid data
+				selectedTerritories.remove(oldTerritory)
+				selectedTerritories.add(newTerritory)
+
+				if (newTextLayer != null) {
+					textLayer = newTextLayer
+				}
+
+				if (alsoSubmit) {
+					submitSelectedNeighbors()
+				} else {
+					update() // If not submitting, just redraw
+					JOptionPane.showMessageDialog(window, "Territory renamed successfully.", "Success", JOptionPane.PLAIN_MESSAGE)
+				}
+
+			} catch (e: Exception) {
+				e.printStackTrace()
+				JOptionPane.showMessageDialog(window, "Error renaming territory: ${e.message}", "Error", JOptionPane.ERROR_MESSAGE)
+			}
+		}
+	}
+
 	fun addTerritoryLabel() {
 		if (selectedTerritories.isEmpty()) {
 			JOptionPane.showMessageDialog(window, "You have not selected a territory.", "Warning", JOptionPane.WARNING_MESSAGE)
@@ -1092,6 +1176,10 @@ class MapViewModel(private val window: ComposeWindow, var mousePosition: Point) 
 				textLayer.setRGB(point.x, point.y, Color(0, 0, 0, 0).rgb)
 			}
 		}
+	}
+
+	private fun refreshTextLayer() {
+		textLayer = ImageUtil.createCopy(textLayer, BufferedImage.TYPE_INT_ARGB)
 	}
 
 }

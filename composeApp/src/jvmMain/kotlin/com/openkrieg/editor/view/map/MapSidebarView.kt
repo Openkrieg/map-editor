@@ -51,7 +51,7 @@ fun MapSidebarView(model: MapViewModel, modifier: Modifier) {
 
 				RkTextField(
 					modifier = Modifier.padding(horizontal = 10.dp),
-					enabled = !model.isSelectingTerritory,
+					enabled = model.isSelectingRegion || model.isSelectingTerritory,
 					value = model.newTerritoryName,
 					label = "Territory Name",
 					singleLine = true,
@@ -63,7 +63,9 @@ fun MapSidebarView(model: MapViewModel, modifier: Modifier) {
 
 				RkButton(
 					onClick = {
-						if (model.isSelectingTerritory) {
+						if (model.isSelectingTerritory && model.selectedTerritoriesAreSubmitted()) {
+							model.renameSelectedTerritory(alsoSubmit = true)
+						} else if (model.isSelectingTerritory) {
 							model.submitSelectedNeighbors()
 						} else if (model.isSelectingRegion) {
 							model.submitSelectedRegions(false)
@@ -75,7 +77,9 @@ fun MapSidebarView(model: MapViewModel, modifier: Modifier) {
 						disabledContentColor = ViewColor.UI_TEXT_ON_DARK_DISABLED.copy(alpha = ContentAlpha.disabled)
 					)
 				) {
-					if (model.isSelectingTerritory) {
+					if (model.isSelectingTerritory && model.selectedTerritoriesAreSubmitted()) {
+						Text("Update", fontSize = 14.sp)
+					} else if (model.isSelectingTerritory) {
 						Text("Submit", fontSize = 14.sp)
 					} else {
 						Text("Add", fontSize = 14.sp)
