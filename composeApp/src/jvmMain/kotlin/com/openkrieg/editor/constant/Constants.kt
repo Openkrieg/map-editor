@@ -4,7 +4,7 @@ import java.awt.Color
 
 object Constants {
 	var NAME = "Openkrieg"
-	var VERSION = "2.8.6-0.2512"
+	var VERSION = "2.8.7-0.2601"
 
 	var SELECT_COLOR = Color(255, 250, 165)
 	var NEIGHBOR_SELECT_COLOR = Color(255, 165, 255)

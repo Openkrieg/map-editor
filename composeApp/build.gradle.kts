@@ -71,7 +71,7 @@ compose.desktop {
 		nativeDistributions {
 			targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Deb, TargetFormat.Dmg)
 			packageName = "Openkrieg Map Editor"
-			packageVersion = "2.8.6"
+			packageVersion = "2.8.7"
 			description = "The official Openkrieg map editor."
 			vendor = "Openkrieg"
 
