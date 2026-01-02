@@ -3,6 +3,7 @@ package com.openkrieg.editor.view.map
 import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -11,11 +12,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusTarget
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.FilterQuality
-import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.scale
-import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
@@ -87,7 +85,7 @@ private fun MapViewport(model: MapViewModel, modifier: Modifier) {
 
 							if (event.type == PointerEventType.Move) {
 								pointerPos = position
-								
+
 								val mapX = (position.x / scale).toInt()
 								val mapY = (position.y / scale).toInt()
 
@@ -148,5 +146,14 @@ private fun MapViewport(model: MapViewModel, modifier: Modifier) {
 		HorizontalScrollbar(
 			modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).padding(end = 12.dp), adapter = rememberScrollbarAdapter(stateHorizontal)
 		)
+
+		if (model.isProcessing) {
+			Box(
+				modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)).clickable(enabled = false) {}) {
+				CircularProgressIndicator(
+					modifier = Modifier.align(Alignment.Center), color = Color.White
+				)
+			}
+		}
 	}
 }

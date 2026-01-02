@@ -45,6 +45,7 @@ import kotlin.collections.ArrayDeque
 class MapViewModel(private val window: ComposeWindow, var mousePosition: Point) {
 
 	private val viewModelScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+	var isProcessing: Boolean by mutableStateOf(false)
 
 	/* Exported Data */
 
@@ -739,56 +740,227 @@ class MapViewModel(private val window: ComposeWindow, var mousePosition: Point) 
 	}
 
 	fun generateNeighbors() {
-		if (isSelectingTerritory) {
-			val territory = selectedTerritories.first()
+		if (!isSelectingTerritory || selectedTerritories.isEmpty()) {
+			JOptionPane.showMessageDialog(window, "Please select a territory first.", "Warning", JOptionPane.WARNING_MESSAGE)
+			return
+		}
 
-			// Remove neighbors -- TODO: Not necessary?
-			removeNeighbors(territory)
-			territory.nuclei
-			update()
+		val territory = selectedTerritories.first()
 
-			// Compute boundary pixels
+		isProcessing = true
 
-			// Loop through boundary pixels
+		// Launch background task
+		viewModelScope.launch {
+			try {
+				// Compute neighbors on Default dispatcher (CPU intensive)
+				val newNeighbors = withContext(Dispatchers.Default) {
+					computeNeighbors(territory)
+				}
 
-			// Calculate normal vector
+				// Update Graph on Main Thread
+				if (newNeighbors.isNotEmpty()) {
+					var addedCount = 0
+					for (neighbor in newNeighbors) {
+						// Avoid self-loops and existing edges
+						if (neighbor != territory && !graph.containsEdge(territory, neighbor)) {
+							val border = Border(territory.identity, neighbor.identity)
+							graph.addEdge(territory, neighbor, border)
+							selectedNeighbors.add(neighbor)
+							addedCount++
+						}
+					}
 
-			// Send ray out
+					if (addedCount > 0) {
+						update()
+						JOptionPane.showMessageDialog(window, "Generated $addedCount new neighbors.", "Success", JOptionPane.INFORMATION_MESSAGE)
+					} else {
+						JOptionPane.showMessageDialog(window, "Neighbors found, but they were already linked.", "Info", JOptionPane.INFORMATION_MESSAGE)
+					}
+				} else {
+					JOptionPane.showMessageDialog(window, "No neighbors found. Ensure borders are drawn with the correct color.", "Info", JOptionPane.INFORMATION_MESSAGE)
+				}
+			} catch (e: Exception) {
+				e.printStackTrace()
+				JOptionPane.showMessageDialog(window, "Error generating neighbors: ${e.message}", "Error", JOptionPane.ERROR_MESSAGE)
+			} finally {
+				isProcessing = false
+			}
 		}
 	}
 
-	private fun computeBoundary(territory: Territory): LinkedHashSet<Point> {
-		// Loop through nuclei -- TODO: For now, just checking first nucleus.
-		// Add nucleus to boundary and use as starting point.
-		// Move to the right clockwise as long as next pixel is territory color
-		// If next pixel is border color, make next pixel equal to current pixel, down 1
-		val boundary = linkedSetOf(Point())
+	/**
+	 * Heavy algorithm to find physical neighbors on the raster map.
+	 */
+	private fun computeNeighbors(territory: Territory): Set<Territory> {
+		val foundNeighbors = HashSet<Territory>()
+		val image = mapImage()
+		val w = image.width
+		val h = image.height
 
-		var direction = Point(1, 0)
+		val nucleusPoint = territory.nuclei.first().toPoint()
+		if (nucleusPoint.x !in 0 until w || nucleusPoint.y !in 0 until h) return emptySet()
+		val selfColor = image.getRGB(nucleusPoint.x, nucleusPoint.y)
 
-		var currentPixel = territory.nuclei.first().toPoint()
-		var tracerPixel = Point(currentPixel.x + direction.x, currentPixel.y + direction.y)
-		while (tracerPixel != currentPixel) {
-			val tracerPixelColor = mapImage().getRGB(tracerPixel.x, tracerPixel.y)
+		val visited = BooleanArray(w * h)
+		val territoryPixels = ArrayList<Point>(1000) // Pre-allocate some space
+		val stack = java.util.ArrayDeque<Point>()
 
-			boundary.add(currentPixel)
-
-			if (tracerPixelColor == RkpPalette.DEFAULT_TERRITORY_COLOR.toAwtColor().rgb) {
-				currentPixel = tracerPixel
-				tracerPixel = Point(currentPixel.x + direction.x, currentPixel.y + direction.y)
-			} else if (tracerPixelColor == RkpPalette.DEFAULT_BORDER_COLOR.toAwtColor().rgb) {
-				when (direction) {
-					Point(1, 0) -> {
-
-					}
+		// Initialize from nuclei
+		for (nucleus in territory.nuclei()) {
+			val p = nucleus.toPoint()
+			if (p.x in 0 until w && p.y in 0 until h) {
+				// Only add if not already visited (in case nuclei are close)
+				if (!visited[p.y * w + p.x]) {
+					stack.push(p)
 				}
-			} else {
-				break
 			}
-
 		}
 
-		return boundary
+		while (!stack.isEmpty()) {
+			val p = stack.pop()
+			var x = p.x
+			val y = p.y
+			val rowOffset = y * w
+
+			// If already visited, skip
+			if (visited[rowOffset + x]) continue
+
+			// A. Move Left: Find the start of this scanline span
+			while (x > 0) {
+				val idx = rowOffset + (x - 1)
+				if (visited[idx]) break // Already handled
+				val rgb = image.getRGB(x - 1, y)
+				if (!isSimilar(rgb, selfColor)) break // Boundary hit
+				x--
+			}
+
+			// B. Scan Right: Fill the span and check above/below
+			var spanAbove = false
+			var spanBelow = false
+
+			while (x < w) {
+				val idx = rowOffset + x
+				val rgb = image.getRGB(x, y)
+
+				// Check if we hit a boundary
+				if (!isSimilar(rgb, selfColor)) break
+
+				// Check if visited (if we ran into another span)
+				if (visited[idx]) {
+					x++
+					continue
+				}
+
+				// "Fill" the pixel
+				visited[idx] = true
+				territoryPixels.add(Point(x, y))
+
+				// Check row above
+				if (y > 0) {
+					val idxAbove = (y - 1) * w + x
+					// If the pixel above is valid and NOT visited, and we aren't already tracking a span
+					if (!visited[idxAbove] && isSimilar(image.getRGB(x, y - 1), selfColor)) {
+						if (!spanAbove) {
+							stack.push(Point(x, y - 1))
+							spanAbove = true
+						}
+					} else {
+						spanAbove = false
+					}
+				}
+
+				// Check row below
+				if (y < h - 1) {
+					val idxBelow = (y + 1) * w + x
+					if (!visited[idxBelow] && isSimilar(image.getRGB(x, y + 1), selfColor)) {
+						if (!spanBelow) {
+							stack.push(Point(x, y + 1))
+							spanBelow = true
+						}
+					} else {
+						spanBelow = false
+					}
+				}
+
+				x++
+			}
+		}
+
+		// Scan edges
+		val checkedLandingPixels = HashSet<Point>()
+		val dirs = arrayOf(Point(1, 0), Point(-1, 0), Point(0, 1), Point(0, -1))
+
+		// Optimization: Only iterate pixels that might be on the edge?
+		// For now, iterating all territory pixels is safe and fast enough with the scanline boost.
+		for (p in territoryPixels) {
+			for (d in dirs) {
+				val nx = p.x + d.x
+				val ny = p.y + d.y
+
+				if (nx in 0 until w && ny in 0 until h) {
+					// Check 'visited' first to avoid expensive getRGB calls for internal pixels
+					if (!visited[ny * w + nx]) {
+						val rgb = image.getRGB(nx, ny)
+
+						// Double check it's not self
+						if (!isSimilar(rgb, selfColor)) {
+
+							val landingPixel = castRayToNeighbor(nx, ny, d, image, selfColor)
+
+							if (landingPixel != null && !checkedLandingPixels.contains(landingPixel)) {
+								checkedLandingPixels.add(landingPixel)
+
+								val potentialNeighbor = getTerritory(landingPixel, graph.vertexSet())
+								if (potentialNeighbor.isPresent) {
+									val neighbor = potentialNeighbor.get()
+									if (neighbor != territory) {
+										foundNeighbors.add(neighbor)
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		return foundNeighbors
+	}
+
+	private fun castRayToNeighbor(startX: Int, startY: Int, dir: Point, image: BufferedImage, selfColor: Int): Point? {
+		var cx = startX
+		var cy = startY
+		val w = image.width
+		val h = image.height
+		var steps = 0
+		val maxBorderThickness = 40 // Max pixels to skip (border thickness)
+
+		while (cx in 0 until w && cy in 0 until h && steps < maxBorderThickness) {
+			val rgb = image.getRGB(cx, cy)
+
+			// If we found a color that is NOT self and NOT similar to the start pixel (border),
+			// we assume we landed on a neighbor.
+			// Note: We rely on getTerritory() later to verify if this pixel actually belongs to a territory.
+			if (!isSimilar(rgb, selfColor) && !isSimilar(rgb, image.getRGB(startX, startY))) {
+				return Point(cx, cy)
+			}
+
+			cx += dir.x
+			cy += dir.y
+			steps++
+		}
+		return null
+	}
+
+	private fun isSimilar(c1: Int, c2: Int, tolerance: Int = 40): Boolean {
+		val r1 = (c1 shr 16) and 0xFF
+		val g1 = (c1 shr 8) and 0xFF
+		val b1 = c1 and 0xFF
+		val r2 = (c2 shr 16) and 0xFF
+		val g2 = (c2 shr 8) and 0xFF
+		val b2 = c2 and 0xFF
+		return kotlin.math.abs(r1 - r2) < tolerance &&
+				kotlin.math.abs(g1 - g2) < tolerance &&
+				kotlin.math.abs(b1 - b2) < tolerance
 	}
 
 	/* Private */
